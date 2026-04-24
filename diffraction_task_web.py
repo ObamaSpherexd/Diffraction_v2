@@ -24,11 +24,10 @@ class ApertureType(Enum):
     SQUARE_OBSTACLE='Непрозрочный экран'
     TRIANGLE='Треугольное отверстие'
     DIFFRACTION_GRATING='Дифракционная решетка'
-<<<<<<< HEAD:diffraction_task_web.py
+
     DOUBLE_RECT='2 прямоугольных отверстия'
     DOUBLE_CIRC='2 круглых отверстия'
-=======
->>>>>>> 33b73ea3c09c30f41de9bc0c96aba8afd2970052:diffraction_task_2.py
+
     CUSTOM='Пользовательская'
 
 # STANDART EXAMPLES - PRESETS
@@ -49,11 +48,7 @@ CUSTOM_TEMPLATES = [
      'amp': '1', 'phase': 'pi*r^2/(wavelength*f)', 
      'params': {'lambda': 500e-9, 'f': 0.5}},
     {'name': 'Зонная пластина Френеля', 
-<<<<<<< HEAD:diffraction_task_web.py
      'amp': '1', 'phase': 'pi*r^2/(wavelength*f)*(1-2*floor(r/sqrt(wavelength*f)))', 
-=======
-     'amp': '1', 'phase': 'pi*r^2/(wavelength*f)*(1-2*floor(r/wavelength/f))', 
->>>>>>> 33b73ea3c09c30f41de9bc0c96aba8afd2970052:diffraction_task_2.py
      'params': {'lambda': 500e-9, 'f': 0.5}},
     {'name': 'Спираль Френеля', 
      'amp': '1', 'phase': 'atan2(y,x)', 
@@ -194,7 +189,6 @@ def make_diffraction_grating_mask(N,size,period,duty_cycle):
     mask=(X%period)<=slit_width
     return mask
 
-<<<<<<< HEAD:diffraction_task_web.py
 def make_double_rect_mask(N,size,width_x,width_y,separation,mirror_offset=0.0):
     '''two rectangular holes'''
     x=np.linspace(-size/2,size/2,N)
@@ -217,8 +211,6 @@ def make_double_circ_mask(N,size,radius,separation,mirror_offset=0.0):
     mask2=np.sqrt((X-center2)**2+Y**2)<=radius
     return mask1 | mask2
 
-=======
->>>>>>> 33b73ea3c09c30f41de9bc0c96aba8afd2970052:diffraction_task_2.py
 def make_custom_mask(N,size,amp_formula,phase_formula,params):
     '''custom aperture from user formulas A(r) and phi(r)'''
     x=np.linspace(-size/2,size/2,N)
@@ -262,7 +254,6 @@ def make_aperture(aperture_type,N,aperture_size,params):
         period = params.get("period", aperture_size / 20)
         duty = params.get("duty_cycle", 0.5)
         return make_diffraction_grating_mask(N, aperture_size, period, duty)
-<<<<<<< HEAD:diffraction_task_web.py
     elif aperture_type == ApertureType.DOUBLE_RECT:
         wx = params.get("width_x", aperture_size / 8)
         wy = params.get("width_y", aperture_size / 6)
@@ -274,8 +265,6 @@ def make_aperture(aperture_type,N,aperture_size,params):
         sep = params.get("separation", aperture_size / 3)
         mirror_offset = params.get("mirror_offset", 0.0)
         return make_double_circ_mask(N, aperture_size, r, sep, mirror_offset)
-=======
->>>>>>> 33b73ea3c09c30f41de9bc0c96aba8afd2970052:diffraction_task_2.py
     elif aperture_type==ApertureType.CUSTOM:
         extra_params = {k: v for k, v in params.items() if k not in ('amp', 'phase')}
         return make_custom_mask(N,aperture_size,params.get('amp','1'),
@@ -471,7 +460,6 @@ def main():
         elif ap_type == ApertureType.DIFFRACTION_GRATING:
             params["period"] = st.number_input("Период решётки (мм)", value=default_params.get("period", 0.05), min_value=0.001)
             params["duty_cycle"] = st.slider("Заполнение (0-1)", 0.1, 0.9, default_params.get("duty_cycle", 0.5))
-<<<<<<< HEAD:diffraction_task_web.py
         elif ap_type == ApertureType.DOUBLE_RECT:
             params["width_x"] = st.number_input("Ширина X (мм)", value=default_params.get("width_x", 0.3), min_value=0.001)
             params["width_y"] = st.number_input("Высота Y (мм)", value=default_params.get("width_y", 0.4), min_value=0.001)
@@ -481,8 +469,6 @@ def main():
             params["radius"] = st.number_input("Радиус (мм)", value=default_params.get("radius", 0.3), min_value=0.001)
             params["separation"] = st.number_input("Расстояние между (мм)", value=default_params.get("separation", 0.8), min_value=0.001)
             params["mirror_offset"] = st.slider("Зеркальное смещение (мм)", min_value=-2.0, max_value=2.0, value=0.0, step=0.01)
-=======
->>>>>>> 33b73ea3c09c30f41de9bc0c96aba8afd2970052:diffraction_task_2.py
         elif ap_type == ApertureType.CUSTOM:
             template = st.selectbox('Шаблон', [t['name'] for t in CUSTOM_TEMPLATES] + ['Своя формула'])
             if template == 'Своя формула':
