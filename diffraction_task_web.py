@@ -189,24 +189,24 @@ def make_diffraction_grating_mask(N,size,period,duty_cycle):
     mask=(X%period)<=slit_width
     return mask
 
-def make_double_rect_mask(N,size,width_x,width_y,separation,mirror_offset=0.0):
+def make_double_rect_mask(N,size,width_x,width_y,separation):
     '''two rectangular holes'''
     x=np.linspace(-size/2,size/2,N)
     y=np.linspace(-size/2,size/2,N)
     X,Y=np.meshgrid(x,y)
-    center1=-separation/2+mirror_offset
-    center2=separation/2-mirror_offset
+    center1=-separation/2
+    center2=separation/2
     mask1=(np.abs(X-center1)<=width_x/2) & (np.abs(Y)<=width_y/2)
     mask2=(np.abs(X-center2)<=width_x/2) & (np.abs(Y)<=width_y/2)
     return mask1 | mask2
 
-def make_double_circ_mask(N,size,radius,separation,mirror_offset=0.0):
+def make_double_circ_mask(N,size,radius,separation):
     '''two circular holes'''
     x=np.linspace(-size/2,size/2,N)
     y=np.linspace(-size/2,size/2,N)
     X,Y=np.meshgrid(x,y)
-    center1=-separation/2+mirror_offset
-    center2=separation/2-mirror_offset
+    center1=-separation/2
+    center2=separation/2
     mask1=np.sqrt((X-center1)**2+Y**2)<=radius
     mask2=np.sqrt((X-center2)**2+Y**2)<=radius
     return mask1 | mask2
@@ -258,13 +258,11 @@ def make_aperture(aperture_type,N,aperture_size,params):
         wx = params.get("width_x", aperture_size / 8)
         wy = params.get("width_y", aperture_size / 6)
         sep = params.get("separation", aperture_size / 3)
-        mirror_offset = params.get("mirror_offset", 0.0)
-        return make_double_rect_mask(N, aperture_size, wx, wy, sep, mirror_offset)
+        return make_double_rect_mask(N, aperture_size, wx, wy, sep)
     elif aperture_type == ApertureType.DOUBLE_CIRC:
         r = params.get("radius", aperture_size / 8)
         sep = params.get("separation", aperture_size / 3)
-        mirror_offset = params.get("mirror_offset", 0.0)
-        return make_double_circ_mask(N, aperture_size, r, sep, mirror_offset)
+        return make_double_circ_mask(N, aperture_size, r, sep)
     elif aperture_type==ApertureType.CUSTOM:
         extra_params = {k: v for k, v in params.items() if k not in ('amp', 'phase')}
         return make_custom_mask(N,aperture_size,params.get('amp','1'),
@@ -464,11 +462,9 @@ def main():
             params["width_x"] = st.number_input("Ширина X (мм)", value=default_params.get("width_x", 0.3), min_value=0.001)
             params["width_y"] = st.number_input("Высота Y (мм)", value=default_params.get("width_y", 0.4), min_value=0.001)
             params["separation"] = st.number_input("Расстояние между (мм)", value=default_params.get("separation", 0.8), min_value=0.001)
-            params["mirror_offset"] = st.slider("Зеркальное смещение (мм)", min_value=-2.0, max_value=2.0, value=0.0, step=0.01)
         elif ap_type == ApertureType.DOUBLE_CIRC:
             params["radius"] = st.number_input("Радиус (мм)", value=default_params.get("radius", 0.3), min_value=0.001)
             params["separation"] = st.number_input("Расстояние между (мм)", value=default_params.get("separation", 0.8), min_value=0.001)
-            params["mirror_offset"] = st.slider("Зеркальное смещение (мм)", min_value=-2.0, max_value=2.0, value=0.0, step=0.01)
         elif ap_type == ApertureType.CUSTOM:
             template = st.selectbox('Шаблон', [t['name'] for t in CUSTOM_TEMPLATES] + ['Своя формула'])
             if template == 'Своя формула':
@@ -538,7 +534,7 @@ def main():
                 ax2.set_xlabel("мм")
                 ax2.set_ylabel("мм")
                 mode_label = "Френель" if mode_used == "frensel" else "Фраунгофер"
-                ax2.set_title(f"Интенсивность ({mode_label}, λ={wavelength_nm}нм, b={b}м, N_F={N_F:.2f})",y=-0.3)
+                ax2.set_title(f"Интенсивность ({mode_label}, λ={wavelength_nm}нм, b={b}м, N_F={N_F:.2f})",y=1)
                 fig.colorbar(im, ax=ax2, label="I / I_max")
 
                 ax3 = fig.add_subplot(gs[1, :])
