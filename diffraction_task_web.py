@@ -5,15 +5,16 @@ from matplotlib.patches import Circle, Rectangle
 from enum import Enum
 from dataclasses import dataclass
 import streamlit as st
-from scipy.special import j1, airy
-
-def parse_formula(formula):
-    """Convert r^n to r**n for user formulas."""
-    return formula.replace('^', '**')
+from scipy.special import j1, airy, fresnel
 
 # constants
-NM=1e-9
-MM=1e-3
+NM = 1e-9
+MM = 1e-3
+
+
+def parse_formula(formula: str) -> str:
+    """Convert r^n to r**n for user formulas."""
+    return formula.replace('^', '**')
 
 # aperture types
 class ApertureType(Enum):
@@ -38,7 +39,7 @@ class Preset:
     wavelength_nm: float
     a: float
     b: float
-    aperture: ApertureType
+    aperture: 'ApertureType'
     params: dict
     screen_size_mm: float
     grid_points: int
@@ -119,10 +120,7 @@ PRESETS = [
 ]
 
 # PARSING CUSTOM MASKS
-def parse_formula(formula):
-    '''convert r^2 to r**2 and basic math support (less human stress)'''
-    formula=formula.replace('^','**')
-    return formula
+# parse_formula is already defined at the top of the file
 
 # CREATING APERTURE MASKS
 def make_single_slit_mask(N,size,width):
@@ -281,6 +279,39 @@ def theoretical_circular_profile(r, radius, wavelength, b):
     j = j1(rho + 1e-10)
     return (2 * j / (rho + 1e-10))**2
 
+def theoretical_double_slit_profile(x, slit_width, slit_separation, wavelength, b):
+    alpha = np.pi * slit_width * x / (wavelength * b)
+    beta = np.pi * slit_separation * x / (wavelength * b)
+    return ((np.sin(alpha + 1e-10) / (alpha + 1e-10))**2
+            * (np.cos(beta + 1e-10))**2)
+
+def theoretical_rectangular_profile(x, width_x, wavelength, b):
+    alpha = np.pi * width_x * x / (wavelength * b)
+    return (np.sin(alpha + 1e-10) / (alpha + 1e-10))**2
+
+def theoretical_grating_profile(x, period, duty_cycle, wavelength, b, N_lines=10):
+    slit_width = period * duty_cycle
+    alpha = np.pi * slit_width * x / (wavelength * b)
+    beta = np.pi * period * x / (wavelength * b)
+    single = (np.sin(alpha + 1e-10) / (alpha + 1e-10))**2
+    with np.errstate(divide='ignore', invalid='ignore'):
+        grating = (np.sin(N_lines * beta + 1e-10) / (N_lines * np.sin(beta + 1e-10)))**2
+    grating = np.nan_to_num(grating, nan=1.0)
+    return single * grating
+
+def theoretical_double_rect_profile(x, width_x, separation, wavelength, b):
+    alpha = np.pi * width_x * x / (wavelength * b)
+    beta = np.pi * separation * x / (wavelength * b)
+    return (np.sin(alpha + 1e-10) / (alpha + 1e-10))**2 * (np.cos(beta + 1e-10))**2
+
+def theoretical_double_circular_profile(x, radius, separation, wavelength, b):
+    k = 2 * np.pi / wavelength
+    rho = k * radius * np.abs(x) / b
+    j = j1(rho + 1e-10)
+    airy = (2 * j / (rho + 1e-10))**2
+    beta = np.pi * separation * x / (wavelength * b)
+    return airy * (np.cos(beta + 1e-10))**2
+
 def find_minima_positions(slit_width, wavelength, b, screen_size, n_points=5):
     x = np.linspace(0, screen_size/2, 1000)
     alpha = np.pi * slit_width * x / (wavelength * b)
@@ -359,13 +390,46 @@ def fraunhofer_diffraction(aperture,wavelength,b,aperture_size,screen_size,N):
         intensity/=max_I
     return intensity,x_nat,y_nat
 
-# AUTO SELECTION BETWEEN CALC TYPES FOR CHRIST SAKE 
-def compute_diffraction(aperture,wavelength,a,b,aperture_size,screen_size,N,mode='auto'):
+def get_aperture_char_size(aperture_type, params, aperture_size):
+    '''Characteristic size of the aperture for Fresnel number calculation.'''
+    if aperture_type == ApertureType.SINGLE_SLIT:
+        return params.get("width", aperture_size / 10)
+    elif aperture_type == ApertureType.DOUBLE_SLIT:
+        sw = params.get("slit_width", aperture_size / 20)
+        ss = params.get("slit_separation", aperture_size / 5)
+        return ss + sw
+    elif aperture_type == ApertureType.CIRCULAR:
+        return params.get("radius", aperture_size / 6) * 2
+    elif aperture_type == ApertureType.RECTANGULAR:
+        wx = params.get("width_x", aperture_size / 4)
+        wy = params.get("width_y", aperture_size / 8)
+        return max(wx, wy)
+    elif aperture_type == ApertureType.SQUARE_OBSTACLE:
+        return params.get("radius", aperture_size / 10) * 2
+    elif aperture_type == ApertureType.TRIANGLE:
+        return aperture_size * 0.4
+    elif aperture_type == ApertureType.DIFFRACTION_GRATING:
+        return params.get("period", aperture_size / 20)
+    elif aperture_type == ApertureType.DOUBLE_RECT:
+        wx = params.get("width_x", aperture_size / 8)
+        sep = params.get("separation", aperture_size / 3)
+        return sep + wx
+    elif aperture_type == ApertureType.DOUBLE_CIRC:
+        r = params.get("radius", aperture_size / 8)
+        sep = params.get("separation", aperture_size / 3)
+        return sep + 2 * r
+    elif aperture_type == ApertureType.CUSTOM:
+        return aperture_size / 3
+    return aperture_size / 3
+
+def compute_diffraction(aperture,wavelength,a,b,aperture_size,screen_size,N,mode='auto',d_char=None):
     '''
     mode="frensel"/"fraunhofer"/"auto" 
+    d_char: characteristic aperture size for Fresnel number (auto if None)
     '''
-    d_char=aperture_size/3
-    N_F=d_char**2/(wavelength*b)
+    if d_char is None:
+        d_char = aperture_size / 3
+    N_F = d_char**2 / (wavelength * b)
     if mode=='auto':
             mode='frensel' if N_F>0.5 else 'fraunhofer'
     if mode=='frensel':
@@ -403,27 +467,27 @@ def main():
     with col1:
         st.subheader('Параметры')
 
-        preset_names=['---Выбор Пресета---']+[p.name for p in PRESETS]
-        selecred_preset=st.selectbox('Пресет',preset_names,index=0)
-        if selecred_preset!='---Выбор Пресета--':
-            preset_idx=preset_names.index(selecred_preset)-1
-            p=PRESETS[preset_idx]
-            default_wavelength=p.wavelength_nm
-            default_a=p.a
-            default_b=p.b
-            default_aperture_size=p.screen_size_mm
-            default_screen_size=p.screen_size_mm
-            default_grid=p.grid_points
-            default_aperture_type=p.aperture
-            default_params={k:v*1000 for k,v in p.params.items()}
+        preset_names = ['---Выбор Пресета---'] + [p.name for p in PRESETS]
+        selected_preset = st.selectbox('Пресет', preset_names, index=0)
+        if selected_preset != '---Выбор Пресета--':
+            preset_idx = preset_names.index(selected_preset) - 1
+            p = PRESETS[preset_idx]
+            default_wavelength = p.wavelength_nm
+            default_a = p.a
+            default_b = p.b
+            default_aperture_size = p.screen_size_mm
+            default_screen_size = p.screen_size_mm
+            default_grid = p.grid_points
+            default_aperture_type = p.aperture
+            default_params = {k: v * 1000 for k, v in p.params.items()}
         else:
-            default_wavelength=532.0
-            default_a=1.0
-            default_b=1.0
-            default_aperture_size=5.0
-            default_screen_size=20.0
-            default_aperture_type=ApertureType.SINGLE_SLIT
-            default_params={}
+            default_wavelength = 532.0
+            default_a = 1.0
+            default_b = 1.0
+            default_aperture_size = 5.0
+            default_screen_size = 20.0
+            default_aperture_type = ApertureType.SINGLE_SLIT
+            default_params = {}
 
         wavelength_nm = st.number_input("Длина волны (нм)", value=default_wavelength, min_value=1.0)
         a = st.number_input("Расст. источник → отверстие (м)", value=default_a, min_value=0.01)
@@ -433,15 +497,15 @@ def main():
         grid_points = st.number_input("Точки сетки", value=default_grid, min_value=64, max_value=2048, step=64)
 
         st.subheader("Тип апертуры")
-        aperture_type=st.selectbox(
+        aperture_type = st.selectbox(
             'aperture type',
             [t.value for t in ApertureType],
             index=list(ApertureType).index(default_aperture_type)
         )
-        ap_type=ApertureType(aperture_type)
+        ap_type = ApertureType(aperture_type)
 
-        st.subheader('Параметры Апертруры')
-        params={}
+        st.subheader('Параметры апертуры')
+        params = {}
 
         if ap_type == ApertureType.SINGLE_SLIT:
             params["width"] = st.number_input("Ширина щели (мм)", value=default_params.get("width", 0.1), min_value=0.001)
@@ -478,37 +542,34 @@ def main():
             params['phase'] = phase_formula
             params['lambda'] = st.number_input('λ (нм)', value=500)
             params['f'] = st.number_input('f (мм)', value=500)
-        st.subheader('Режим Рассчета')
-        mode=st.radio('Режим',['auto','frensel','fraunhofer'],horizontal=True)
+        st.subheader('Режим расчёта')
+        mode = st.radio('Режим', ['auto', 'frensel', 'fraunhofer'], horizontal=True)
         show_theory = st.checkbox('Показать теорию', value=True)
         show_minima = st.checkbox('Показать минимумы', value=True)
 
-        params_key=(
-            wavelength_nm,a,b,aperture_size_mm,screen_size_mm,grid_points,ap_type,tuple(sorted(params.items())))
-        
-    
     with col2:
         if True:
             try:
-                wavelength=wavelength_nm*NM
-                aperture_size=aperture_size_mm*MM
-                screen_size=screen_size_mm*MM
-                N=int(grid_points)
+                wavelength = wavelength_nm * NM
+                aperture_size = aperture_size_mm * MM
+                screen_size = screen_size_mm * MM
+                N = int(grid_points)
 
-                params_m={k: (v*MM if isinstance(v, (int, float)) else v) for k,v in params.items()}
-                aperture=make_aperture(ap_type,N,aperture_size,params_m)
+                params_m = {k: (v * MM if isinstance(v, (int, float)) else v) for k, v in params.items()}
+                aperture = make_aperture(ap_type, N, aperture_size, params_m)
 
-                intensity,x,y,mode_used,N_F=compute_diffraction(aperture,wavelength,a,b,aperture_size,screen_size,N,mode=mode)
+                d_char = get_aperture_char_size(ap_type, params_m, aperture_size)
+                intensity, x, y, mode_used, N_F = compute_diffraction(aperture, wavelength, a, b, aperture_size, screen_size, N, mode=mode, d_char=d_char)
 
-                fig=plt.figure(figsize=(12.8, 8.0))
-                
+                fig = plt.figure(figsize=(12.8, 8.0))
+
                 if np.iscomplexobj(aperture):
-                    gs=GridSpec(2,3,fig,hspace=0.3,wspace=0.3)
+                    gs = GridSpec(2, 3, fig, hspace=0.3, wspace=0.3)
                     ax1 = fig.add_subplot(gs[0, 0])
                     ax1a = fig.add_subplot(gs[0, 1])
                     ax2 = fig.add_subplot(gs[0, 2])
                 else:
-                    gs=GridSpec(2,2,fig,hspace=0.3,wspace=0.3)
+                    gs = GridSpec(2, 2, fig, hspace=0.3, wspace=0.3)
                     ax1 = fig.add_subplot(gs[0, 0])
                     ax2 = fig.add_subplot(gs[0, 1])
 
@@ -517,14 +578,14 @@ def main():
                 if np.iscomplexobj(aperture):
                     ax1.imshow(np.abs(aperture), cmap="gray", extent=extent, origin="lower")
                     ax1.set_title("Апертура (амплитуда)")
-                    
+
                     im_a = ax1a.imshow(np.angle(aperture), cmap="hsv", extent=extent, origin="lower")
                     ax1a.set_title("Апертура (фаза)")
                     fig.colorbar(im_a, ax=ax1a, label="фаза (рад)")
                 else:
                     ax1.imshow(aperture, cmap="gray", extent=extent, origin="lower")
                     ax1.set_title("Апертура")
-                
+
                 ax1.set_xlabel("мм")
                 ax1.set_ylabel("мм")
                 ax1.set_aspect("equal")
@@ -534,7 +595,7 @@ def main():
                 ax2.set_xlabel("мм")
                 ax2.set_ylabel("мм")
                 mode_label = "Френель" if mode_used == "frensel" else "Фраунгофер"
-                ax2.set_title(f"Интенсивность ({mode_label}, λ={wavelength_nm}нм, b={b}м, N_F={N_F:.2f})",y=1)
+                ax2.set_title(f"Интенсивность ({mode_label}, λ={wavelength_nm}нм, b={b}м, N_F={N_F:.2f})", y=1)
                 fig.colorbar(im, ax=ax2, label="I / I_max")
 
                 ax3 = fig.add_subplot(gs[1, :])
@@ -548,17 +609,41 @@ def main():
                 ax3.set_xlim(-screen_size_mm / 2, screen_size_mm / 2)
 
                 if show_theory and mode_used == 'fraunhofer':
+                    x_th = x_mm * 1e-3
                     if ap_type == ApertureType.SINGLE_SLIT:
-                        slit_width = params_m.get("width", 0.1e-3)
-                        x_theory = x_mm * 1e-3
-                        I_theory = theoretical_slit_profile(x_theory, slit_width, wavelength, b)
-                        ax3.plot(x_mm, I_theory, "r--", linewidth=1.5, alpha=0.7, label='Теория (sinc²)')
+                        w = params_m.get("width", 0.1e-3)
+                        I_th = theoretical_slit_profile(x_th, w, wavelength, b)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label='Теория (sinc²)')
+                    elif ap_type == ApertureType.DOUBLE_SLIT:
+                        sw = params_m.get("slit_width", 0.05e-3)
+                        ss = params_m.get("slit_separation", 0.2e-3)
+                        I_th = theoretical_double_slit_profile(x_th, sw, ss, wavelength, b)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label='Теория (sinc²·cos²)')
                     elif ap_type == ApertureType.CIRCULAR:
                         radius = params_m.get("radius", 0.5e-3)
-                        r_theory = np.abs(x_mm * 1e-3)
-                        I_theory = theoretical_circular_profile(r_theory, radius, wavelength, b)
-                        ax3.plot(x_mm, I_theory, "r--", linewidth=1.5, alpha=0.7, label='Теория (Эйри)')
-                
+                        I_th = theoretical_circular_profile(np.abs(x_th), radius, wavelength, b)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label='Теория (Эйри)')
+                    elif ap_type == ApertureType.RECTANGULAR:
+                        wx = params_m.get("width_x", 1.5e-3)
+                        I_th = theoretical_rectangular_profile(x_th, wx, wavelength, b)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label='Теория (sinc²)')
+                    elif ap_type == ApertureType.DIFFRACTION_GRATING:
+                        period = params_m.get("period", 0.1e-3)
+                        duty = params_m.get("duty_cycle", 0.5)
+                        N_lines = max(2, int(aperture_size / period))
+                        I_th = theoretical_grating_profile(x_th, period, duty, wavelength, b, N_lines)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label=f'Теория (решётка N={N_lines})')
+                    elif ap_type == ApertureType.DOUBLE_RECT:
+                        wx = params_m.get("width_x", 0.3e-3)
+                        sep = params_m.get("separation", 0.8e-3)
+                        I_th = theoretical_double_rect_profile(x_th, wx, sep, wavelength, b)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label='Теория (sinc²·cos²)')
+                    elif ap_type == ApertureType.DOUBLE_CIRC:
+                        radius = params_m.get("radius", 0.3e-3)
+                        sep = params_m.get("separation", 0.8e-3)
+                        I_th = theoretical_double_circular_profile(x_th, radius, sep, wavelength, b)
+                        ax3.plot(x_mm, I_th, "r--", lw=1.5, alpha=0.7, label='Теория (Эйри·cos²)')
+
                 if show_minima and (ap_type == ApertureType.SINGLE_SLIT or ap_type == ApertureType.CIRCULAR):
                     slit_width = params_m.get("width", params_m.get("radius", 0.1e-3)) * 2
                     minima_pos = find_minima_positions(slit_width, wavelength, b, screen_size)

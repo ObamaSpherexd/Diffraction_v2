@@ -295,7 +295,10 @@ def fresnel_diffraction(aperture, wavelength, a, b, aperture_size, screen_size, 
     if max_I > 0:
         intensity /= max_I
 
-    return intensity
+    # actual FFT screen coords
+    x_nat = np.fft.fftshift(np.fft.fftfreq(N, dx)) * wavelength * b
+    y_nat = np.fft.fftshift(np.fft.fftfreq(N, dy)) * wavelength * b
+    return intensity, x_nat, y_nat
 
 
 # ---------------------------------------------------------------------------
@@ -332,28 +335,56 @@ def fraunhofer_diffraction(aperture, wavelength, b, aperture_size, screen_size, 
 
 
 # ---------------------------------------------------------------------------
+# Характерный размер апертуры для числа Френеля
+# ---------------------------------------------------------------------------
+def get_aperture_char_size(aperture_type, params, aperture_size):
+    if aperture_type == ApertureType.SINGLE_SLIT:
+        return params.get("width", aperture_size / 10)
+    elif aperture_type == ApertureType.DOUBLE_SLIT:
+        sw = params.get("slit_width", aperture_size / 20)
+        ss = params.get("slit_separation", aperture_size / 5)
+        return ss + sw
+    elif aperture_type == ApertureType.CIRCULAR:
+        return params.get("radius", aperture_size / 6) * 2
+    elif aperture_type == ApertureType.RECTANGULAR:
+        wx = params.get("width_x", aperture_size / 4)
+        wy = params.get("width_y", aperture_size / 8)
+        return max(wx, wy)
+    elif aperture_type == ApertureType.SQUARE_OBSTACLE:
+        return params.get("radius", aperture_size / 10) * 2
+    elif aperture_type == ApertureType.TRIANGLE:
+        return aperture_size * 0.4
+    elif aperture_type == ApertureType.DOUBLE_RECT:
+        wx = params.get("width_x", aperture_size / 8)
+        sep = params.get("separation", aperture_size / 3)
+        return sep + wx
+    elif aperture_type == ApertureType.DOUBLE_CIRC:
+        r = params.get("radius", aperture_size / 8)
+        sep = params.get("separation", aperture_size / 3)
+        return sep + 2 * r
+    return aperture_size / 3
+
+# ---------------------------------------------------------------------------
 # Универсальный расчёт (автовыбор Френель/Фраунгофер)
 # ---------------------------------------------------------------------------
 def compute_diffraction(aperture, wavelength, a, b, aperture_size, screen_size, N,
-                        mode="auto"):
+                        mode="auto", d_char=None):
     """
     mode = "fresnel" | "fraunhofer" | "auto"
     В режиме auto выбирается по числу Френеля:
         N_F = d² / (λ·b),  где d — характерный размер апертуры.
         N_F > 1 → Френель, N_F < 1 → Фраунгофер.
     """
-    # Характерный размер апертуры
-    d_char = aperture_size / 3
+    if d_char is None:
+        d_char = aperture_size / 3
     N_F = d_char ** 2 / (wavelength * b)
 
     if mode == "auto":
         mode = "fresnel" if N_F > 0.5 else "fraunhofer"
 
     if mode == "fresnel":
-        intensity = fresnel_diffraction(
+        intensity, x, y = fresnel_diffraction(
             aperture, wavelength, a, b, aperture_size, screen_size, N)
-        x = np.linspace(-screen_size / 2, screen_size / 2, N)
-        y = np.linspace(-screen_size / 2, screen_size / 2, N)
         return intensity, x, y, "fresnel", N_F
     else:
         intensity, x, y = fraunhofer_diffraction(
@@ -560,9 +591,10 @@ class DiffractionApp:
 
             aperture = make_aperture(ap_type, N, aperture_size, params)
 
+            d_char = get_aperture_char_size(ap_type, params, aperture_size)
             intensity, x, y, mode_used, N_F = compute_diffraction(
                 aperture, wavelength, a, b, aperture_size, screen_size, N,
-                mode=self.mode_var.get())
+                mode=self.mode_var.get(), d_char=d_char)
 
             self._plot(aperture, intensity, x, y, wavelength_nm, a, b,
                        aperture_size_mm, screen_size_mm, mode_used, N_F, ap_type, params, aperture_size)
@@ -605,13 +637,14 @@ class DiffractionApp:
         # 3. Профиль интенсивности (горизонтальное сечение)
         ax3 = self.fig.add_subplot(gs[1, :])
         mid = len(y) // 2
-        x_mm = np.linspace(-screen_size_mm / 2, screen_size_mm / 2, len(x))
+        x_mm = x * 1000
         ax3.plot(x_mm, intensity[mid, :], "b-", linewidth=1)
         ax3.set_xlabel("Положение на экране (мм)")
         ax3.set_ylabel("I / I_max")
         ax3.set_title("Профиль интенсивности (центральное сечение)")
         ax3.grid(True, alpha=0.3)
-        ax3.set_xlim(-screen_size_mm / 2, screen_size_mm / 2)
+        half = screen_size_mm / 2
+        ax3.set_xlim(-half, half)
 
         self.fig.tight_layout()
 
